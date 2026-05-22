@@ -1,0 +1,56 @@
+services:
+  details:
+    build:
+      context: .
+    image: trace-fusion-bookinfo-rust:latest
+    container_name: bookinfo-rust-details
+    environment:
+      SERVICE_ROLE: details
+      BOOK_COUNT: 100
+    ports:
+      - "9481:9080"
+
+  ratings:
+    build:
+      context: .
+    image: trace-fusion-bookinfo-rust:latest
+    container_name: bookinfo-rust-ratings
+    environment:
+      SERVICE_ROLE: ratings
+      BOOK_COUNT: 100
+    ports:
+      - "9482:9080"
+
+  reviews:
+    build:
+      context: .
+    image: trace-fusion-bookinfo-rust:latest
+    container_name: bookinfo-rust-reviews
+    environment:
+      SERVICE_ROLE: reviews
+      RATINGS_HOSTNAME: ratings
+      RATINGS_SERVICE_PORT: 9080
+      ENABLE_RATINGS: "true"
+      STAR_COLOR: black
+    depends_on:
+      - ratings
+    ports:
+      - "9483:9080"
+
+  productpage:
+    build:
+      context: .
+    image: trace-fusion-bookinfo-rust:latest
+    container_name: bookinfo-rust-productpage
+    environment:
+      SERVICE_ROLE: productpage
+      BOOK_COUNT: 100
+      DETAILS_HOSTNAME: details
+      DETAILS_SERVICE_PORT: 9080
+      REVIEWS_HOSTNAME: reviews
+      REVIEWS_SERVICE_PORT: 9080
+    depends_on:
+      - details
+      - reviews
+    ports:
+      - "9480:9080"

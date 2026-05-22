@@ -1,0 +1,51 @@
+services:
+  details:
+    build:
+      context: ./overrides/details
+    image: trace-fusion-bookinfo-details:extended
+    container_name: bookinfo-details
+    environment:
+      BOOK_COUNT: 100
+    ports:
+      - "9081:9080"
+
+  ratings:
+    build:
+      context: ./overrides/ratings
+    image: trace-fusion-bookinfo-ratings:extended
+    container_name: bookinfo-ratings
+    environment:
+      BOOK_COUNT: 100
+    ports:
+      - "9082:9080"
+
+  reviews:
+    build:
+      context: ./overrides/reviews
+    image: trace-fusion-bookinfo-reviews:extended
+    container_name: bookinfo-reviews
+    environment:
+      RATINGS_HOSTNAME: ratings
+      SERVICE_VERSION: v2
+      ENABLE_RATINGS: "true"
+      STAR_COLOR: black
+    depends_on:
+      - ratings
+    ports:
+      - "9083:9080"
+
+  productpage:
+    build:
+      context: ./overrides/productpage
+    image: trace-fusion-bookinfo-productpage:extended
+    container_name: bookinfo-productpage
+    environment:
+      BOOK_COUNT: 100
+      DETAILS_HOSTNAME: details
+      REVIEWS_HOSTNAME: reviews
+      DISABLE_APP_TRACE_HEADERS: "true"
+    depends_on:
+      - details
+      - reviews
+    ports:
+      - "9080:9080"

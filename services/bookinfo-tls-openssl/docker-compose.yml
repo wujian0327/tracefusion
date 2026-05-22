@@ -1,0 +1,86 @@
+services:
+  details:
+    build:
+      context: ./overrides/details
+      network: host
+    image: trace-fusion-bookinfo-tls-openssl-details:latest
+    container_name: bookinfo-tls-openssl-details
+    environment:
+      BOOK_COUNT: 100
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      NO_PROXY: "*"
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      no_proxy: "*"
+    ports:
+      - "9441:9080"
+
+  ratings:
+    build:
+      context: ./overrides/ratings
+      network: host
+    image: trace-fusion-bookinfo-tls-openssl-ratings:latest
+    container_name: bookinfo-tls-openssl-ratings
+    environment:
+      BOOK_COUNT: 100
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      NO_PROXY: "*"
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      no_proxy: "*"
+    ports:
+      - "9442:9080"
+
+  reviews:
+    build:
+      context: ./overrides/reviews
+      network: host
+    image: trace-fusion-bookinfo-tls-openssl-reviews:latest
+    container_name: bookinfo-tls-openssl-reviews
+    environment:
+      RATINGS_HOSTNAME: ratings
+      RATINGS_SERVICE_PORT: 9080
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      NO_PROXY: "*"
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      no_proxy: "*"
+    depends_on:
+      - ratings
+    ports:
+      - "9443:9080"
+
+  productpage:
+    build:
+      context: ./overrides/productpage
+      network: host
+    image: trace-fusion-bookinfo-tls-openssl-productpage:latest
+    container_name: bookinfo-tls-openssl-productpage
+    environment:
+      BOOK_COUNT: 100
+      DETAILS_HOSTNAME: details
+      DETAILS_SERVICE_PORT: 9080
+      REVIEWS_HOSTNAME: reviews
+      REVIEWS_SERVICE_PORT: 9080
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      NO_PROXY: "*"
+      http_proxy: ""
+      https_proxy: ""
+      all_proxy: ""
+      no_proxy: "*"
+    depends_on:
+      - details
+      - reviews
+    ports:
+      - "9440:9080"

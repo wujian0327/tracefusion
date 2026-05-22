@@ -1,0 +1,190 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bookinfo-java
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: details
+  namespace: bookinfo-java
+  labels:
+    app: details
+    service: details
+spec:
+  ports:
+  - port: 9080
+    name: http
+  selector:
+    app: details
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: details-v1
+  namespace: bookinfo-java
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: details
+  template:
+    metadata:
+      labels:
+        app: details
+        service: details
+    spec:
+      containers:
+      - name: details
+        image: trace-fusion-bookinfo-java:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9080
+        env:
+        - name: SERVICE_ROLE
+          value: details
+        - name: BOOK_COUNT
+          value: "100"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ratings
+  namespace: bookinfo-java
+  labels:
+    app: ratings
+    service: ratings
+spec:
+  ports:
+  - port: 9080
+    name: http
+  selector:
+    app: ratings
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ratings-v1
+  namespace: bookinfo-java
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ratings
+  template:
+    metadata:
+      labels:
+        app: ratings
+        service: ratings
+    spec:
+      containers:
+      - name: ratings
+        image: trace-fusion-bookinfo-java:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9080
+        env:
+        - name: SERVICE_ROLE
+          value: ratings
+        - name: BOOK_COUNT
+          value: "100"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reviews
+  namespace: bookinfo-java
+  labels:
+    app: reviews
+    service: reviews
+spec:
+  ports:
+  - port: 9080
+    name: http
+  selector:
+    app: reviews
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reviews-v1
+  namespace: bookinfo-java
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reviews
+  template:
+    metadata:
+      labels:
+        app: reviews
+        service: reviews
+    spec:
+      containers:
+      - name: reviews
+        image: trace-fusion-bookinfo-java:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9080
+        env:
+        - name: SERVICE_ROLE
+          value: reviews
+        - name: RATINGS_HOSTNAME
+          value: ratings
+        - name: RATINGS_SERVICE_PORT
+          value: "9080"
+        - name: ENABLE_RATINGS
+          value: "true"
+        - name: STAR_COLOR
+          value: black
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: productpage
+  namespace: bookinfo-java
+  labels:
+    app: productpage
+    service: productpage
+spec:
+  ports:
+  - port: 9080
+    name: http
+  selector:
+    app: productpage
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: productpage-v1
+  namespace: bookinfo-java
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: productpage
+  template:
+    metadata:
+      labels:
+        app: productpage
+        service: productpage
+    spec:
+      containers:
+      - name: productpage
+        image: trace-fusion-bookinfo-java:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9080
+        env:
+        - name: SERVICE_ROLE
+          value: productpage
+        - name: BOOK_COUNT
+          value: "100"
+        - name: DETAILS_HOSTNAME
+          value: details
+        - name: DETAILS_SERVICE_PORT
+          value: "9080"
+        - name: REVIEWS_HOSTNAME
+          value: reviews
+        - name: REVIEWS_SERVICE_PORT
+          value: "9080"

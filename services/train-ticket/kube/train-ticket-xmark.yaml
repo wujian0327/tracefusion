@@ -1,0 +1,1395 @@
+# Trace-fusion TrainTicket preserve-path Kubernetes deployment.
+#
+# This manifest mirrors services/train-ticket/docker-compose.yml:
+# - Keeps only the services needed by the preserve benchmark path.
+# - Uses service names identical to docker compose, so the original
+#   TrainTicket Spring configuration can resolve peer services by DNS.
+# - Loads the X-Mark propagation override from a ConfigMap named
+#   xmark-propagation-jar.
+#
+# Create the ConfigMap before applying this file:
+#   services/train-ticket/overrides/xmark-propagation/build.sh
+#   kubectl create namespace train-ticket --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl -n train-ticket create configmap xmark-propagation-jar \
+#     --from-file=xmark-propagation.jar=services/train-ticket/overrides/xmark-propagation/build/xmark-propagation.jar \
+#     --dry-run=client -o yaml | kubectl apply -f -
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: train-ticket
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-auth-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-auth-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-auth-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-auth-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-auth-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-auth-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-auth-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-auth-service
+  namespace: train-ticket
+  labels:
+    app: ts-auth-service
+    service: ts-auth-service
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 12340
+    targetPort: 12340
+    nodePort: 31340
+  selector:
+    app: ts-auth-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-auth-service
+  namespace: train-ticket
+  labels:
+    app: ts-auth-service
+    service: ts-auth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-auth-service
+  template:
+    metadata:
+      labels:
+        app: ts-auth-service
+        service: ts-auth-service
+    spec:
+      containers:
+      - name: ts-auth-service
+        image: docker.io/codewisdom/ts-auth-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-auth-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 12340
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-user-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-user-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-user-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-user-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-user-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-user-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-user-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-user-service
+  namespace: train-ticket
+  labels:
+    app: ts-user-service
+    service: ts-user-service
+spec:
+  ports:
+  - name: http
+    port: 12342
+    targetPort: 12342
+  selector:
+    app: ts-user-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-user-service
+  namespace: train-ticket
+  labels:
+    app: ts-user-service
+    service: ts-user-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-user-service
+  template:
+    metadata:
+      labels:
+        app: ts-user-service
+        service: ts-user-service
+    spec:
+      containers:
+      - name: ts-user-service
+        image: docker.io/codewisdom/ts-user-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-user-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 12342
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-verification-code-service
+  namespace: train-ticket
+  labels:
+    app: ts-verification-code-service
+    service: ts-verification-code-service
+spec:
+  ports:
+  - name: http
+    port: 15678
+    targetPort: 15678
+  selector:
+    app: ts-verification-code-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-verification-code-service
+  namespace: train-ticket
+  labels:
+    app: ts-verification-code-service
+    service: ts-verification-code-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-verification-code-service
+  template:
+    metadata:
+      labels:
+        app: ts-verification-code-service
+        service: ts-verification-code-service
+    spec:
+      containers:
+      - name: ts-verification-code-service
+        image: docker.io/codewisdom/ts-verification-code-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-verification-code-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 15678
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-route-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-route-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-route-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-route-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-route-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-route-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-route-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-route-service
+  namespace: train-ticket
+  labels:
+    app: ts-route-service
+    service: ts-route-service
+spec:
+  ports:
+  - name: http
+    port: 11178
+    targetPort: 11178
+  selector:
+    app: ts-route-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-route-service
+  namespace: train-ticket
+  labels:
+    app: ts-route-service
+    service: ts-route-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-route-service
+  template:
+    metadata:
+      labels:
+        app: ts-route-service
+        service: ts-route-service
+    spec:
+      containers:
+      - name: ts-route-service
+        image: docker.io/codewisdom/ts-route-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-route-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 11178
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-contacts-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-contacts-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-contacts-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-contacts-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-contacts-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-contacts-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-contacts-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-contacts-service
+  namespace: train-ticket
+  labels:
+    app: ts-contacts-service
+    service: ts-contacts-service
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 12347
+    targetPort: 12347
+    nodePort: 31347
+  selector:
+    app: ts-contacts-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-contacts-service
+  namespace: train-ticket
+  labels:
+    app: ts-contacts-service
+    service: ts-contacts-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-contacts-service
+  template:
+    metadata:
+      labels:
+        app: ts-contacts-service
+        service: ts-contacts-service
+    spec:
+      containers:
+      - name: ts-contacts-service
+        image: docker.io/codewisdom/ts-contacts-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-contacts-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 12347
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-order-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-order-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-order-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-order-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-order-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-order-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-order-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-order-service
+  namespace: train-ticket
+  labels:
+    app: ts-order-service
+    service: ts-order-service
+spec:
+  ports:
+  - name: http
+    port: 12031
+    targetPort: 12031
+  selector:
+    app: ts-order-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-order-service
+  namespace: train-ticket
+  labels:
+    app: ts-order-service
+    service: ts-order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-order-service
+  template:
+    metadata:
+      labels:
+        app: ts-order-service
+        service: ts-order-service
+    spec:
+      containers:
+      - name: ts-order-service
+        image: docker.io/codewisdom/ts-order-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-order-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 12031
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-order-other-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-order-other-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-order-other-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-order-other-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-order-other-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-order-other-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-order-other-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-order-other-service
+  namespace: train-ticket
+  labels:
+    app: ts-order-other-service
+    service: ts-order-other-service
+spec:
+  ports:
+  - name: http
+    port: 12032
+    targetPort: 12032
+  selector:
+    app: ts-order-other-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-order-other-service
+  namespace: train-ticket
+  labels:
+    app: ts-order-other-service
+    service: ts-order-other-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-order-other-service
+  template:
+    metadata:
+      labels:
+        app: ts-order-other-service
+        service: ts-order-other-service
+    spec:
+      containers:
+      - name: ts-order-other-service
+        image: docker.io/codewisdom/ts-order-other-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-order-other-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 12032
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-config-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-config-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-config-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-config-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-config-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-config-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-config-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-config-service
+  namespace: train-ticket
+  labels:
+    app: ts-config-service
+    service: ts-config-service
+spec:
+  ports:
+  - name: http
+    port: 15679
+    targetPort: 15679
+  selector:
+    app: ts-config-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-config-service
+  namespace: train-ticket
+  labels:
+    app: ts-config-service
+    service: ts-config-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-config-service
+  template:
+    metadata:
+      labels:
+        app: ts-config-service
+        service: ts-config-service
+    spec:
+      containers:
+      - name: ts-config-service
+        image: docker.io/codewisdom/ts-config-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-config-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 15679
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-station-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-station-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-station-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-station-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-station-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-station-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-station-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-station-service
+  namespace: train-ticket
+  labels:
+    app: ts-station-service
+    service: ts-station-service
+spec:
+  ports:
+  - name: http
+    port: 12345
+    targetPort: 12345
+  selector:
+    app: ts-station-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-station-service
+  namespace: train-ticket
+  labels:
+    app: ts-station-service
+    service: ts-station-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-station-service
+  template:
+    metadata:
+      labels:
+        app: ts-station-service
+        service: ts-station-service
+    spec:
+      containers:
+      - name: ts-station-service
+        image: docker.io/codewisdom/ts-station-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-station-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 12345
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-train-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-train-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-train-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-train-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-train-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-train-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-train-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-train-service
+  namespace: train-ticket
+  labels:
+    app: ts-train-service
+    service: ts-train-service
+spec:
+  ports:
+  - name: http
+    port: 14567
+    targetPort: 14567
+  selector:
+    app: ts-train-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-train-service
+  namespace: train-ticket
+  labels:
+    app: ts-train-service
+    service: ts-train-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-train-service
+  template:
+    metadata:
+      labels:
+        app: ts-train-service
+        service: ts-train-service
+    spec:
+      containers:
+      - name: ts-train-service
+        image: docker.io/codewisdom/ts-train-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-train-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 14567
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-travel-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-travel-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-travel-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-travel-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-travel-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-travel-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-travel-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-travel-service
+  namespace: train-ticket
+  labels:
+    app: ts-travel-service
+    service: ts-travel-service
+spec:
+  ports:
+  - name: http
+    port: 12346
+    targetPort: 12346
+  selector:
+    app: ts-travel-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-travel-service
+  namespace: train-ticket
+  labels:
+    app: ts-travel-service
+    service: ts-travel-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-travel-service
+  template:
+    metadata:
+      labels:
+        app: ts-travel-service
+        service: ts-travel-service
+    spec:
+      containers:
+      - name: ts-travel-service
+        image: docker.io/codewisdom/ts-travel-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-travel-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 12346
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-preserve-service
+  namespace: train-ticket
+  labels:
+    app: ts-preserve-service
+    service: ts-preserve-service
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 14568
+    targetPort: 14568
+    nodePort: 31468
+  selector:
+    app: ts-preserve-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-preserve-service
+  namespace: train-ticket
+  labels:
+    app: ts-preserve-service
+    service: ts-preserve-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-preserve-service
+  template:
+    metadata:
+      labels:
+        app: ts-preserve-service
+        service: ts-preserve-service
+    spec:
+      containers:
+      - name: ts-preserve-service
+        image: docker.io/codewisdom/ts-preserve-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-preserve-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 14568
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-basic-service
+  namespace: train-ticket
+  labels:
+    app: ts-basic-service
+    service: ts-basic-service
+spec:
+  ports:
+  - name: http
+    port: 15680
+    targetPort: 15680
+  selector:
+    app: ts-basic-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-basic-service
+  namespace: train-ticket
+  labels:
+    app: ts-basic-service
+    service: ts-basic-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-basic-service
+  template:
+    metadata:
+      labels:
+        app: ts-basic-service
+        service: ts-basic-service
+    spec:
+      containers:
+      - name: ts-basic-service
+        image: docker.io/codewisdom/ts-basic-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-basic-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 15680
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-ticketinfo-service
+  namespace: train-ticket
+  labels:
+    app: ts-ticketinfo-service
+    service: ts-ticketinfo-service
+spec:
+  ports:
+  - name: http
+    port: 15681
+    targetPort: 15681
+  selector:
+    app: ts-ticketinfo-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-ticketinfo-service
+  namespace: train-ticket
+  labels:
+    app: ts-ticketinfo-service
+    service: ts-ticketinfo-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-ticketinfo-service
+  template:
+    metadata:
+      labels:
+        app: ts-ticketinfo-service
+        service: ts-ticketinfo-service
+    spec:
+      containers:
+      - name: ts-ticketinfo-service
+        image: docker.io/codewisdom/ts-ticketinfo-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-ticketinfo-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 15681
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-price-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-price-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-price-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-price-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-price-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-price-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-price-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-price-service
+  namespace: train-ticket
+  labels:
+    app: ts-price-service
+    service: ts-price-service
+spec:
+  ports:
+  - name: http
+    port: 16579
+    targetPort: 16579
+  selector:
+    app: ts-price-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-price-service
+  namespace: train-ticket
+  labels:
+    app: ts-price-service
+    service: ts-price-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-price-service
+  template:
+    metadata:
+      labels:
+        app: ts-price-service
+        service: ts-price-service
+    spec:
+      containers:
+      - name: ts-price-service
+        image: docker.io/codewisdom/ts-price-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-price-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 16579
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-security-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-security-mongo
+spec:
+  ports:
+  - name: mongo
+    port: 27017
+    targetPort: 27017
+  selector:
+    app: ts-security-mongo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-security-mongo
+  namespace: train-ticket
+  labels:
+    app: ts-security-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-security-mongo
+  template:
+    metadata:
+      labels:
+        app: ts-security-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: docker.io/library/mongo:4.4
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 27017
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-security-service
+  namespace: train-ticket
+  labels:
+    app: ts-security-service
+    service: ts-security-service
+spec:
+  ports:
+  - name: http
+    port: 11188
+    targetPort: 11188
+  selector:
+    app: ts-security-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-security-service
+  namespace: train-ticket
+  labels:
+    app: ts-security-service
+    service: ts-security-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-security-service
+  template:
+    metadata:
+      labels:
+        app: ts-security-service
+        service: ts-security-service
+    spec:
+      containers:
+      - name: ts-security-service
+        image: docker.io/codewisdom/ts-security-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-security-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 11188
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-seat-service
+  namespace: train-ticket
+  labels:
+    app: ts-seat-service
+    service: ts-seat-service
+spec:
+  ports:
+  - name: http
+    port: 18898
+    targetPort: 18898
+  selector:
+    app: ts-seat-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-seat-service
+  namespace: train-ticket
+  labels:
+    app: ts-seat-service
+    service: ts-seat-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-seat-service
+  template:
+    metadata:
+      labels:
+        app: ts-seat-service
+        service: ts-seat-service
+    spec:
+      containers:
+      - name: ts-seat-service
+        image: docker.io/codewisdom/ts-seat-service:0.2.0
+        imagePullPolicy: Never
+        command: ["java"]
+        args: ["-Xmx200m", "-Dloader.path=/xmark", "-cp", "/app/ts-seat-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+        ports:
+        - containerPort: 18898
+        volumeMounts:
+        - name: xmark-propagation
+          mountPath: /xmark/xmark-propagation.jar
+          subPath: xmark-propagation.jar
+          readOnly: true
+      volumes:
+      - name: xmark-propagation
+        configMap:
+          name: xmark-propagation-jar

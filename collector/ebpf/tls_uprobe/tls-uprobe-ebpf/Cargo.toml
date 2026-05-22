@@ -1,0 +1,15 @@
+[package]
+name = "tls-uprobe-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+tls-uprobe-common = { path = "../tls-uprobe-common" }
+aya-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "tls_uprobe"
+path = "src/main.rs"

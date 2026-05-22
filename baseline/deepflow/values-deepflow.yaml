@@ -1,0 +1,4 @@
+global:
+  allInOneLocalStorage: true
+  image:
+    repository: registry.cn-beijing.aliyuncs.com/deepflow-ce

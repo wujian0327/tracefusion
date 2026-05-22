@@ -1,0 +1,251 @@
+version: "3.8"
+
+services:
+  consul:
+    image: consul:1.9.5
+    container_name: consul
+    ports:
+      - "9500:8500"
+    networks:
+      default:
+        ipv4_address: 172.28.0.2
+
+  frontend:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: frontend
+    ports:
+      - "5000:5000"
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+      - LOG_LEVEL=info
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.3
+
+  profile:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: profile
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - mongodb-profile
+      - memcached-profile
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.4
+
+  search:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: search
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.5
+
+  geo:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: geo
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - mongodb-geo
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.6
+
+  rate:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: rate
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - mongodb-rate
+      - memcached-rate
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.7
+
+  recommendation:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: recommendation
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - mongodb-recommendation
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.8
+
+  user:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: user
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - mongodb-user
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.9
+
+  reservation:
+    build: .
+    image: deathstarbench/hotel-reservation:latest
+    entrypoint: reservation
+    environment:
+      - JAEGER_SAMPLE_RATIO=1
+    volumes:
+      - ./config.json:/config.json
+    depends_on:
+      - mongodb-reservation
+      - memcached-reserve
+      - consul
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.10
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.22
+    container_name: jaeger
+    ports:
+      - "16686:16686"
+      - "6831:6831/udp"
+    networks:
+      default:
+        ipv4_address: 172.28.0.11
+
+  # --- Databases & Caches with correct network aliases ---
+
+  memcached-rate:
+    image: memcached:latest
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.12
+        aliases:
+          - memcached-rate
+
+  memcached-profile:
+    image: memcached:latest
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.13
+        aliases:
+          - memcached-profile
+
+  memcached-reserve:
+    image: memcached:latest
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.14
+        aliases:
+          - memcached-reserve
+          - memcached-reservation
+
+  mongodb-geo:
+    image: mongo:5.0
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.15
+        aliases:
+          - mongodb-geo
+          - geo-db
+
+  mongodb-profile:
+    image: mongo:5.0
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.16
+        aliases:
+          - mongodb-profile
+          - profile-db
+
+  mongodb-rate:
+    image: mongo:5.0
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.17
+        aliases:
+          - mongodb-rate
+          - rate-db
+
+  mongodb-recommendation:
+    image: mongo:5.0
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.18
+        aliases:
+          - mongodb-recommendation
+          - recommendation-db
+
+  mongodb-reservation:
+    image: mongo:5.0
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.19
+        aliases:
+          - mongodb-reservation
+          - reservation-db
+
+  mongodb-user:
+    image: mongo:5.0
+    restart: always
+    networks:
+      default:
+        ipv4_address: 172.28.0.20
+        aliases:
+          - mongodb-user
+          - user-db
+
+networks:
+  default:
+    name: hotelreservation-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

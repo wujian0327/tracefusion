@@ -1,0 +1,27 @@
+[package]
+name = "tls-uprobe"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tls-uprobe-common = { path = "../tls-uprobe-common", features = ["user"] }
+
+anyhow = { workspace = true, default-features = true }
+aya = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+env_logger = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+
+[build-dependencies]
+anyhow = { workspace = true }
+aya-build = { workspace = true }
+cargo_metadata = { workspace = true }
+tls-uprobe-ebpf = { path = "../tls-uprobe-ebpf" }
+
+[[bin]]
+name = "tls_uprobe"
+path = "src/main.rs"

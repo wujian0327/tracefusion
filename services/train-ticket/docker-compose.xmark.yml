@@ -1,0 +1,73 @@
+version: "3"
+
+x-xmark-volume: &xmark-volume
+  - ./overrides/xmark-propagation/build/xmark-propagation.jar:/xmark/xmark-propagation.jar:ro
+
+services:
+  ts-auth-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-auth-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-user-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-user-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-verification-code-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-verification-code-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-route-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-route-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-contacts-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-contacts-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-order-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-order-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-order-other-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-order-other-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-config-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-config-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-station-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-station-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-train-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-train-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-travel-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-travel-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-preserve-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-preserve-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-basic-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-basic-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-ticketinfo-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-ticketinfo-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-price-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-price-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-security-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-security-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
+
+  ts-seat-service:
+    volumes: *xmark-volume
+    command: ["java", "-Xmx512m", "-Dloader.path=/xmark", "-cp", "/app/ts-seat-service-1.0.jar", "org.springframework.boot.loader.PropertiesLauncher"]
