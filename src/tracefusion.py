@@ -1447,6 +1447,12 @@ def run_service_graph_algorithm(
     max_temporal_candidates = int(os.getenv("LINEAGE_GRAPH_MAX_TEMPORAL_CANDIDATES", "64"))
     max_fallback_candidates = int(os.getenv("LINEAGE_GRAPH_MAX_FALLBACK_CANDIDATES", "64"))
     propagation_mode = os.getenv("LINEAGE_GRAPH_PROPAGATION_MODE", "frontier").strip().lower()
+    temporal_profile_enabled = os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE", "1") != "0"
+    temporal_profile_weight = float(os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE_WEIGHT", str(time_weight)))
+    temporal_profile_min_samples = int(os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE_MIN_SAMPLES", "8"))
+    temporal_profile_max_count_ratio = float(os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE_MAX_COUNT_RATIO", "1.5"))
+    temporal_profile_bucket_count = int(os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE_BUCKETS", "10"))
+    temporal_profile_sigma_min = float(os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE_SIGMA_MIN_MS", "50")) / 1000.0
 
     predicted_trace_by_key = dict(root_label_by_key)
     predicted_parent_by_key = {}
@@ -1458,6 +1464,81 @@ def run_service_graph_algorithm(
         edge: compute_idf_weights(events)
         for edge, events in outgoing_by_edge.items()
     }
+
+    def build_edge_temporal_profiles():
+        profiles = {}
+        summary = {}
+        if not temporal_profile_enabled:
+            return profiles, summary
+
+        for edge, child_events in outgoing_by_edge.items():
+            parent_events = incoming_by_service.get(edge[0], [])
+            parent_count = len(parent_events)
+            child_count = len(child_events)
+            key = f"{edge[0]}->{edge[1]}"
+            info = {
+                'enabled': False,
+                'parent_count': parent_count,
+                'child_count': child_count,
+                'reason': 'not-evaluated',
+            }
+            if parent_count < temporal_profile_min_samples or child_count < temporal_profile_min_samples:
+                info['reason'] = 'too-few-spans'
+                summary[key] = info
+                continue
+
+            count_ratio = max(parent_count, child_count) / max(1, min(parent_count, child_count))
+            info['count_ratio'] = count_ratio
+            if count_ratio > temporal_profile_max_count_ratio:
+                info['reason'] = 'count-ratio-too-high'
+                summary[key] = info
+                continue
+
+            parent_starts = sorted(event['req_ts'] for event in parent_events)
+            child_starts = sorted(event['req_ts'] for event in child_events)
+            mu = float(np.mean(child_starts) - np.mean(parent_starts))
+            if mu < -req_tolerance:
+                info['reason'] = 'negative-offset'
+                info['mu_ms'] = mu * 1000.0
+                summary[key] = info
+                continue
+
+            bucket_count = max(1, min(temporal_profile_bucket_count, parent_count, child_count))
+            bucket_offsets = []
+            for bucket_idx in range(bucket_count):
+                p_start = round(bucket_idx * parent_count / bucket_count)
+                p_end = round((bucket_idx + 1) * parent_count / bucket_count)
+                c_start = round(bucket_idx * child_count / bucket_count)
+                c_end = round((bucket_idx + 1) * child_count / bucket_count)
+                p_bucket = parent_starts[p_start:p_end]
+                c_bucket = child_starts[c_start:c_end]
+                if p_bucket and c_bucket:
+                    bucket_offsets.append(float(np.mean(c_bucket) - np.mean(p_bucket)))
+
+            if len(bucket_offsets) >= 2:
+                sigma = float(np.std(bucket_offsets, ddof=1))
+            else:
+                sigma = temporal_profile_sigma_min
+            if math.isnan(sigma) or sigma <= 0:
+                sigma = temporal_profile_sigma_min
+            sigma = max(sigma, temporal_profile_sigma_min)
+
+            profiles[edge] = {
+                'mu': mu,
+                'sigma': sigma,
+            }
+            summary[key] = {
+                **info,
+                'enabled': True,
+                'reason': 'ok',
+                'mu_ms': mu * 1000.0,
+                'sigma_ms': sigma * 1000.0,
+                'bucket_count': len(bucket_offsets),
+            }
+        return profiles, summary
+
+    edge_temporal_profiles, temporal_profile_summary = build_edge_temporal_profiles()
+    profile_mark("temporal-profile")
 
     def initial_contexts(parent_events):
         return [
@@ -1572,7 +1653,7 @@ def run_service_graph_algorithm(
     )
     trace_context_rebuild_count = 0
 
-    def temporal_score(parent_event, child_event):
+    def temporal_score(edge, parent_event, child_event):
         starts_before = parent_event['req_ts'] <= child_event['req_ts'] + req_tolerance
         ends_after = parent_event['res_ts'] + res_tolerance >= child_event['res_ts']
         req_inside = parent_event['req_ts'] - req_tolerance <= child_event['req_ts'] <= parent_event['res_ts'] + res_tolerance
@@ -1587,9 +1668,26 @@ def run_service_graph_algorithm(
         if not ends_after and outside > fallback_window:
             return None
 
-        start_gap = max(child_event['req_ts'] - parent_event['req_ts'], 0.0)
         outside_penalty = containment_penalty if outside > res_tolerance else 0.0
-        return -(start_gap * time_weight) - outside_penalty - (outside * time_weight * 4.0)
+        profile = edge_temporal_profiles.get(edge)
+        if profile is None:
+            return -outside_penalty - (outside * time_weight * 4.0)
+
+        delta = child_event['req_ts'] - parent_event['req_ts']
+        sigma = max(profile['sigma'], temporal_profile_sigma_min)
+        z = (delta - profile['mu']) / sigma
+        profile_score = math.exp(-0.5 * z * z)
+        return (profile_score * temporal_profile_weight) - outside_penalty - (outside * time_weight * 4.0)
+
+    def fallback_temporal_score(edge, parent_event, child_event, distance):
+        profile = edge_temporal_profiles.get(edge)
+        if profile is None:
+            return -(distance * time_weight) - containment_penalty
+        delta = child_event['req_ts'] - parent_event['req_ts']
+        sigma = max(profile['sigma'], temporal_profile_sigma_min)
+        z = (delta - profile['mu']) / sigma
+        profile_score = math.exp(-0.5 * z * z)
+        return (profile_score * temporal_profile_weight) - containment_penalty
 
     graph_candidate_parent_cache = {}
     candidate_mode = os.getenv("LINEAGE_GRAPH_CANDIDATE_MODE", "windowed").strip().lower()
@@ -1609,7 +1707,7 @@ def run_service_graph_algorithm(
             temporal_candidates = []
             fallback_candidates = []
             for parent_event in parent_events:
-                t_score = temporal_score(parent_event, child_event)
+                t_score = temporal_score(edge, parent_event, child_event)
                 if t_score is not None:
                     temporal_candidates.append((parent_event, t_score))
                 distance = abs(child_event['req_ts'] - parent_event['req_ts'])
@@ -1648,7 +1746,7 @@ def run_service_graph_algorithm(
 
             temporal_candidates = []
             for parent_event in active_parents:
-                t_score = temporal_score(parent_event, child_event)
+                t_score = temporal_score(edge, parent_event, child_event)
                 if t_score is not None:
                     temporal_candidates.append((parent_event, t_score))
 
@@ -1726,12 +1824,13 @@ def run_service_graph_algorithm(
                     'parent_key': parent_event['key'],
                     'lineage_score': lineage_score,
                     'trace_context_score': trace_context_score,
+                    'temporal_score': t_score,
                 }
 
         if best is not None:
             return best
 
-        # 兜底: 短时间窗口内找最近的已预测 parent，避免轻微时间戳越界导致整条链断开。
+        # 兜底: 短时间窗口内补充轻微越界候选，避免时间戳边界误差导致整条链断开。
         nearest = None
         for parent_event, distance in fallback_candidates:
             parent_tid = current_predictions.get(parent_event['key'])
@@ -1739,11 +1838,11 @@ def run_service_graph_algorithm(
                 continue
             lineage_score = cached_parent_child_score(edge, parent_event, child_event)
             trace_context_score = cached_trace_context_score(edge, parent_tid, child_event)
+            t_score = fallback_temporal_score(edge, parent_event, child_event, distance)
             score = (
                 (lineage_score * lineage_weight)
                 + (trace_context_score * trace_context_weight)
-                - (distance * time_weight)
-                - containment_penalty
+                + t_score
             )
             if nearest is None or score > nearest['score']:
                 nearest = {
@@ -1752,6 +1851,7 @@ def run_service_graph_algorithm(
                     'parent_key': parent_event['key'],
                     'lineage_score': lineage_score,
                     'trace_context_score': trace_context_score,
+                    'temporal_score': t_score,
                 }
         return nearest
 
@@ -1823,6 +1923,7 @@ def run_service_graph_algorithm(
                     'score': pred['score'],
                     'lineage_score': pred.get('lineage_score', 0.0),
                     'trace_context_score': pred.get('trace_context_score', 0.0),
+                    'temporal_score': pred.get('temporal_score', 0.0),
                 }
 
             if not changed:
@@ -3255,6 +3356,11 @@ def run_service_graph_algorithm(
         'containment_fallback_fixed_count': containment_fixed_count,
         'weights': {
             'time_weight': time_weight,
+            'temporal_profile_enabled': temporal_profile_enabled,
+            'temporal_profile_weight': temporal_profile_weight,
+            'temporal_profile_min_samples': temporal_profile_min_samples,
+            'temporal_profile_max_count_ratio': temporal_profile_max_count_ratio,
+            'temporal_profile_sigma_min_ms': temporal_profile_sigma_min * 1000.0,
             'lineage_weight': lineage_weight,
             'trace_context_weight': trace_context_weight,
             'containment_penalty': containment_penalty,
@@ -3312,6 +3418,7 @@ def run_service_graph_algorithm(
         'worst_traces': worst_traces,
         'error_events': error_events,
         'observed_edge_accuracy': edge_accuracy,
+        'temporal_profile': temporal_profile_summary,
         'slot_fallback': slot_fallback_summary,
         'containment_fallback': containment_edge_summary,
         'calibration_profile': {
@@ -3337,6 +3444,7 @@ def run_service_graph_algorithm(
     print(f"  每 trace span 数分布: {dict(sorted(span_distribution.items()))}")
     print(f"  observed service edge 数: {len(outgoing_by_edge)}")
     print(f"  root direct seed 数: {root_seed_count}")
+    print(f"  temporal profile edge 数: {len(edge_temporal_profiles)}")
     if parent_reconstruction_summary.get('enabled'):
         print(
             "  parent reconstruction: "
@@ -3350,7 +3458,7 @@ def run_service_graph_algorithm(
     print(f"  迭代轮数: {iterations_run}")
     print(
         "融合权重: "
-        f"time={time_weight}, lineage={lineage_weight}, "
+        f"time={time_weight}, temporal_profile={temporal_profile_weight}, lineage={lineage_weight}, "
         f"trace_context={trace_context_weight}, "
         f"containment_penalty={containment_penalty}, "
         f"req_tol_ms={req_tolerance * 1000:.0f}, res_tol_ms={res_tolerance * 1000:.0f}, "
