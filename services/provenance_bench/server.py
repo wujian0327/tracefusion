@@ -25,6 +25,8 @@ def main():
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-delay-ms", type=float, default=25)
+    parser.add_argument("--postprocess-ms", type=float, default=80)
+    parser.add_argument("--branch-delay-ms", type=float, default=100)
     args = parser.parse_args()
     rng = random.Random(args.seed + ROLES.index(args.role))
     random_lock = threading.Lock()
@@ -65,6 +67,7 @@ def main():
             started = time.time_ns()
             event_id = uuid.uuid4().hex
             children, flows, source = [], [], None
+            postprocess_delay = branch_delay = 0.0
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 8192:
@@ -82,10 +85,11 @@ def main():
                     if scenario not in SCENARIOS or not self.path.startswith("/case/"):
                         raise ValueError("unknown scenario")
                     if scenario.startswith("decoy_"):
-                        other_uid = "u29" if scenario == "decoy_same" else "u88"
+                        other_uid = "u29" if scenario.endswith("_same") else "u88"
+                        decoy_path = "/lookup_slow" if scenario.startswith("decoy_unbalanced_") else "/lookup"
                         with ThreadPoolExecutor(max_workers=2) as pool:
                             first = pool.submit(call, "api", "profile", args.port, "/lookup", {"user_id": uid})
-                            other = pool.submit(call, "api", "decoy", args.port, "/lookup", {"user_id": other_uid})
+                            other = pool.submit(call, "api", "decoy", args.port, decoy_path, {"user_id": other_uid})
                             a, b = first.result(), other.result()
                         children = [a[1], b[1]]
                         # Deliberately hidden selection: this is oracle-only state.
@@ -93,14 +97,25 @@ def main():
                         # uniquely determined from the exported observations.
                         result, selected = b if choose_decoy else a
                     else:
-                        result, selected = call("api", "profile", args.port, "/lookup", {"user_id": uid})
+                        path = "/lookup_postprocess" if scenario == "postprocess" else "/lookup"
+                        result, selected = call("api", "profile", args.port, path, {"user_id": uid})
                         children = [selected]
                     body = {"phone": result["phone"]}
                     flows = [{"from": node(selected), "to": node(event_id)}]
                 elif args.role in {"profile", "decoy"}:
-                    if self.path != "/lookup":
+                    if self.path not in {"/lookup", "/lookup_postprocess", "/lookup_slow"}:
                         raise ValueError("unknown operation")
+                    with random_lock:
+                        if self.path == "/lookup_postprocess":
+                            postprocess_delay = rng.uniform(0, args.postprocess_ms) / 1000
+                        elif self.path == "/lookup_slow":
+                            branch_delay = rng.uniform(args.branch_delay_ms / 2, args.branch_delay_ms) / 1000
+                    if branch_delay:
+                        time.sleep(branch_delay)
                     result, selected = call(args.role, "store", args.port, "/query", {"user_id": uid})
+                    # Simulate work/wait after the read; not a CPU-overhead benchmark.
+                    if postprocess_delay:
+                        time.sleep(postprocess_delay)
                     children = [selected]
                     body = {"phone": result["phone"]}
                     flows = [{"from": node(selected), "to": node(event_id)}]
@@ -115,6 +130,8 @@ def main():
                 append_json(args.run_dir / "oracle" / f"{args.role}.jsonl", {
                     "event_id": event_id, "call_children": children,
                     "flow_edges": flows, "source": source,
+                    "injected_postprocess_ms": postprocess_delay * 1000,
+                    "injected_branch_delay_ms": branch_delay * 1000,
                 })
                 self.send_json(200, body, event_id)
                 append_json(args.run_dir / "oracle" / "boundary" / f"{args.role}.jsonl", {

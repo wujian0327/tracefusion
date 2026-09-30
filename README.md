@@ -201,3 +201,8 @@ python3 scripts/run_provenance_bench.py --requests 20 --concurrency 8
 同一运行还会生成 `comparison/summary.json`，比较值/时间、请求参数、调用次数及两者结合四种基线。
 约束基线的实验先验显式保存在 `constraint_profile.json`；已有结果可用
 `python3 services/provenance_bench/compare_baselines.py --run-dir <运行目录>` 重评，无需重新采集。
+
+用 `--suite stress` 检验读取后的额外处理和并行分支耗时不均，或用 `--suite all` 跑全部八个场景。
+默认仍运行五个核心场景。每次比较额外输出两种时间排序的诊断；排序保留全部来源候选和传播边，
+`summary.json` 的 `timing_rankings` 分别报告完整候选召回率、首选层召回率和错误唯一首选数。
+时间排序依赖工作负载假设，分数不是概率，不能直接作为唯一归因。

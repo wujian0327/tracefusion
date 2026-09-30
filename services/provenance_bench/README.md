@@ -4,6 +4,7 @@
 现有 TraceFusion、Bookinfo、Hotel、TrainTicket 的代码与运行方式不变。
 
 **当前提供的是 benchmark + 值/时间候选基线 + 两层约束基线，不是已经完成的新 TraceFusion 算法。**
+额外提供不裁剪候选的时间排序，用压力场景检验其假设是否可靠。
 所有数据是合成字符串，如 `SYNTH-PHONE-0017`；不使用真实个人信息。
 
 ## 快速运行
@@ -17,6 +18,16 @@ python3 scripts/run_provenance_bench.py --requests 20 --concurrency 8
 `--requests` 是每个场景的请求数。默认共 5 个场景、100 次根请求、380 次 HTTP 交换。
 默认输出到 `result/provenance_bench/<UTC时间>/`，终端打印绝对路径。
 指定输出目录必须尚不存在，避免覆盖之前的实验。
+
+`--suite core`（默认）运行原来的五个场景；`--suite stress` 运行三个压力场景；
+`--suite all` 运行全部八个场景。明确指定 `--scenario <名称>` 时优先运行该场景。
+每场景 20 次请求时，stress 共 60 次根请求、260 次 HTTP 交换，all 共 160 次根请求、640 次交换。
+
+```bash
+python3 scripts/run_provenance_bench.py \
+  --suite stress --requests 20 --concurrency 12 --seed 404 \
+  --postprocess-ms 80 --branch-delay-ms 100
+```
 
 ```bash
 python3 scripts/run_provenance_bench.py \
@@ -39,10 +50,18 @@ Linux 推荐；其他系统须支持这些 loopback 地址。
 | `same_user_concurrent` | 并发查询同一用户 | 区分重复读取事件；必要时保留歧义 |
 | `decoy_different` | API 并行调用两路，返回值不同，只采用一路 | 排除发生过调用但没有贡献出口字段的分支 |
 | `decoy_same` | 两路返回相同值，API 内部随机采用一路 | 观测不可唯一判定时，保留多个候选 |
+| `postprocess` | Profile 读取 Store 后，额外等待再返回 | 单下游调用不意味着读取后立即返回 |
+| `decoy_unbalanced_different` | 不同值的两路调用，第二路额外等待后读取 | 检验并行分支耗时不均导致的时间排序偏差 |
+| `decoy_unbalanced_same` | 相同值的两路调用，第二路额外等待后读取 | 同时检验时间偏差和内部选择歧义 |
 
 两路场景的实际选择只记录在 oracle，不放入 URL、header 或响应。`decoy` 是第二路服务的固定名字，
 不意味着它总是不被采用。并发调度会影响随机序列消费顺序，固定 seed 不保证跨次运行逐事件相同。
 `basic` 固定串行，其他场景使用 `--concurrency`。随机延迟在每个业务服务内部注入。
+三个压力场景由 `--suite stress` 选择（表中最后三行）。`postprocess` 的读取后等待均匀采样
+自 `[0, --postprocess-ms]`（默认 80ms）；不均衡场景的第二路在读 Store 前等待
+`[--branch-delay-ms / 2, --branch-delay-ms]`（默认 50–100ms）。原有随机延迟仍然生效。
+这些等待模拟处理或调度延迟，不构成 CPU 负载或系统开销评测。注入的实际延迟仅记录在 oracle，
+不作为推断输入；观测保留实际发生的请求路径和时间。
 
 Store 使用真正的 SQLite 表和参数化 SELECT，通过 HTTP `/query` 暴露读取结果。
 **这是 SQL 查询网关场景，不是原生 MySQL/PostgreSQL 协议采集验证。** 来源粒度是一次网关查询返回的
@@ -174,6 +193,9 @@ comparison/
   combined_predictions.jsonl   参数 + 调用次数约束
   *_report.json                独立 oracle 评测结果
   *_diagnostics.json           约束配置、调用候选及回退原因（约束方法）
+  timing_*_predictions.jsonl   combined 完整候选 + 时间排序标注
+  timing_*_diagnostics.json    排序方式、规模限制及未排序分量
+  timing_*_report.json         保留候选指标和首选层诊断
 ```
 
 已有完整运行目录可直接重评，无需重新启动服务或采集：
@@ -218,6 +240,36 @@ python3 services/provenance_bench/compare_baselines.py \
 该分量恢复到**时间筛选后的候选**，不强制匹配，也不保留导致无解的参数裁剪。
 diagnostics 中分别记录 `unbalanced_counts`、`no_perfect_matching`、`component_limit`。
 默认每分量最多 128 个子事件、4096 条参数筛选后的候选边；独立 CLI 可调整。
+
+## 时间排序：可被压力场景否定的辅助假设
+
+两种排序都使用 combined 的可行调用候选，并保留原来的 `candidate_sources`、`edges` 和 `status`。
+只增加 `timing_ranking`；它不会把有歧义的回答改成唯一归因。排序器只读取观测、预测及约束诊断，
+不读取 oracle。四个基线和两个排序均先生成预测，再独立评测。
+
+- `all_return`：所有候选调用边都按父响应结束与子响应结束的间隔平方计成本。
+- `single_child_return`：仅在 profile 声明父操作恰有一个下游调用时使用该成本；并行扇出父操作的成本为零。
+
+在每个平衡、可匹配的调用分量中，用 Hungarian 算法求最小总成本。
+某条边的评分是“强制选择它的最小总成本”减去“不强制的最小总成本”。
+某个来源的评分是所有候选传播路径中边评分之和的最小值。分数越低越优先，但这是启发式，
+不是概率、联合路径可行性的证明或经校准的置信度。相同最低分全部保留在首选层；事件编号仅用于展示排序。
+
+单个下游调用也可能在读取结束后继续处理，因此 `single_child_return` 依然可能错误偏好其他请求的来源。
+`postprocess` 专门检验这一点；两个不均衡分支场景检验扇出带来的偏差。
+每个排序分量默认最多 24 个父/子事件；超过限制、约束回退或无法评分时，该分量的边评分全部为零，
+不凭空加入排序偏好。独立 `timing_rank.py --max-component` 可调至最多 32，默认时间尺度为 5ms。
+
+`comparison/summary.json` 新增 `timing_rankings`：
+
+- `retained_candidates`：完整候选的来源及传播边指标，应与 combined 一致。
+- `top_tier_source_recall`：真实来源落在首选层的比例。
+- `unique_top_queries` / `correct_unique_top` / `wrong_unique_top`：首选层只有一个候选时的总数、正确数和错误数。
+- `tied_top_queries`：最低分并列的查询数；不按编号强行挑一个。
+
+后三类位于 `top_tier`，并有 `by_scenario` 明细。首选层指标只回答“假如只采用首选层会怎样”，
+不表示已执行裁剪；重点检查错误唯一首选和来源召回损失。旧观测可直接重评时间排序，
+新增压力场景则需要重新运行工作负载。
 
 回退不会恢复未采集到的事件，也不能识别所有错误先验：例如父子恰好同时丢失时，
 错误 profile 仍可能存在可行匹配。时间窗口本身也可能排除真实关系。

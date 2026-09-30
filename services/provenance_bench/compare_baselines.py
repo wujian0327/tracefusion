@@ -26,7 +26,7 @@ def main():
         "capacity": ["--disable-semantics"],
         "combined": [],
     }
-    summary = {"status": "running", "tolerance_ms": args.tolerance_ms, "input_sha256": {}, "variants": {}}
+    summary = {"status": "running", "tolerance_ms": args.tolerance_ms, "input_sha256": {}, "variants": {}, "timing_rankings": {}}
     try:
         for path in (observations, queries, args.profile):
             summary["input_sha256"][path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -40,6 +40,15 @@ def main():
             if flags is not None:
                 cmd += ["--profile", str(args.profile), "--diagnostics", str(output / f"{name}_diagnostics.json")] + flags
             subprocess.run(cmd, check=True)
+        timing_modes = ("all_return", "single_child_return")
+        for mode in timing_modes:
+            subprocess.run([
+                sys.executable, str(HERE / "timing_rank.py"), "--observations", str(observations),
+                "--predictions", str(output / "combined_predictions.jsonl"),
+                "--call-diagnostics", str(output / "combined_diagnostics.json"),
+                "--output", str(output / f"timing_{mode}_predictions.jsonl"),
+                "--diagnostics", str(output / f"timing_{mode}_diagnostics.json"), "--mode", mode,
+            ], check=True)
         for name in variants:
             report_path = output / f"{name}_report.json"
             subprocess.run([
@@ -57,6 +66,18 @@ def main():
             print(f"{name}: exact_graph={metrics['exact_graph_rate']}, "
                   f"source_recall={metrics['source_recall']}, "
                   f"source_precision={metrics['source_precision']}", flush=True)
+        for mode in timing_modes:
+            report_path = output / f"timing_{mode}_report.json"
+            subprocess.run([
+                sys.executable, str(HERE / "evaluate_ranking.py"), "--queries", str(queries),
+                "--predictions", str(output / f"timing_{mode}_predictions.jsonl"),
+                "--oracle-dir", str(args.run_dir / "oracle"), "--output", str(report_path),
+            ], check=True)
+            report = json.loads(report_path.read_text())
+            diagnostics = json.loads((output / f"timing_{mode}_diagnostics.json").read_text())
+            report["unranked_components"] = diagnostics["unranked_components"]
+            summary["timing_rankings"][mode] = report
+            print(f"timing_{mode}: {report['top_tier']}", flush=True)
         summary["status"] = "complete"
         print(f"Comparison: {output.resolve() / 'summary.json'}")
     except (Exception, KeyboardInterrupt) as exc:

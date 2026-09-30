@@ -12,8 +12,10 @@ ADDRESSES = {
     "store": "127.0.0.5",
 }
 ROLES = ("api", "profile", "decoy", "store")
-SCENARIOS = ("basic", "same_value_concurrent", "same_user_concurrent",
-             "decoy_different", "decoy_same")
+CORE_SCENARIOS = ("basic", "same_value_concurrent", "same_user_concurrent",
+                  "decoy_different", "decoy_same")
+STRESS_SCENARIOS = ("postprocess", "decoy_unbalanced_different", "decoy_unbalanced_same")
+SCENARIOS = CORE_SCENARIOS + STRESS_SCENARIOS
 _write_lock = threading.Lock()
 
 

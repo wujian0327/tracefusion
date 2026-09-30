@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import shutil
 import signal
@@ -15,7 +16,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 BENCH = ROOT / "services" / "provenance_bench"
 sys.path.insert(0, str(BENCH))
-from common import ADDRESSES, ROLES, SCENARIOS, append_json, call, node, read_jsonl
+from common import ADDRESSES, ROLES, SCENARIOS, CORE_SCENARIOS, STRESS_SCENARIOS, append_json, call, node, read_jsonl
 
 
 def stop(process):
@@ -34,13 +35,19 @@ def main():
     parser.add_argument("--requests", type=int, default=20, help="requests PER scenario")
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--scenario", choices=("all",) + SCENARIOS, default="all")
+    parser.add_argument("--suite", choices=("core", "stress", "all"), default="core")
     parser.add_argument("--port", type=int, default=18780)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-delay-ms", type=float, default=25)
+    parser.add_argument("--postprocess-ms", type=float, default=80)
+    parser.add_argument("--branch-delay-ms", type=float, default=100)
     parser.add_argument("--capture", choices=("boundary", "pcap"), default="boundary")
     args = parser.parse_args()
     if args.requests < 1 or not 1 <= args.concurrency <= 128 or args.max_delay_ms < 0:
         parser.error("requests >= 1, concurrency in [1,128], max-delay-ms >= 0 required")
+    if any(not math.isfinite(x) or not 0 <= x <= 2000 for x in
+           (args.max_delay_ms, args.postprocess_ms, args.branch_delay_ms)):
+        parser.error("delay parameters must be finite and in [0,2000] ms")
     if not 1024 <= args.port <= 65535:
         parser.error("port must be in [1024,65535]")
     if args.capture == "pcap" and (not shutil.which("tcpdump") or not shutil.which("tshark")):
@@ -60,11 +67,14 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=False)
     for name in ("observations", "oracle", "logs"):
         (run_dir / name).mkdir()
-    scenarios = SCENARIOS if args.scenario == "all" else (args.scenario,)
+    suites = {"core": CORE_SCENARIOS, "stress": STRESS_SCENARIOS, "all": SCENARIOS}
+    scenarios = suites[args.suite] if args.scenario == "all" else (args.scenario,)
     metadata = {"schema_version": 1, "status": "running", "capture_mode": args.capture,
                 "seed": args.seed, "requests_per_scenario": args.requests,
                 "concurrency": args.concurrency, "scenarios": list(scenarios),
                 "max_delay_ms": args.max_delay_ms, "port": args.port,
+                "suite": args.suite, "postprocess_ms": args.postprocess_ms,
+                "branch_delay_ms": args.branch_delay_ms, "workload_revision": 2,
                 "python": sys.version, "benchmark": "synthetic-http-sqlite-gateway-v1"}
     processes, logs, capture = [], [], None
     try:
@@ -75,6 +85,7 @@ def main():
                 sys.executable, str(BENCH / "server.py"), "--role", role,
                 "--port", str(args.port), "--run-dir", str(run_dir),
                 "--seed", str(args.seed), "--max-delay-ms", str(args.max_delay_ms),
+                "--postprocess-ms", str(args.postprocess_ms), "--branch-delay-ms", str(args.branch_delay_ms),
             ], stdout=log, stderr=subprocess.STDOUT)
             processes.append(process)
             deadline = time.monotonic() + 10
