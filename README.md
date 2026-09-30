@@ -198,3 +198,6 @@ python3 scripts/run_provenance_bench.py --requests 20 --concurrency 8
 当前数据源是 SQLite 的 HTTP 查询网关，不代表原生数据库协议采集支持。
 详细场景、数据格式、真值边界和运行命令见 [provenance benchmark README](services/provenance_bench/README.md)。
 
+同一运行还会生成 `comparison/summary.json`，比较值/时间、请求参数、调用次数及两者结合四种基线。
+约束基线的实验先验显式保存在 `constraint_profile.json`；已有结果可用
+`python3 services/provenance_bench/compare_baselines.py --run-dir <运行目录>` 重评，无需重新采集。

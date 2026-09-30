@@ -1,0 +1,12 @@
+{
+  "name": "synthetic-http-sqlite-gateway-v1",
+  "description": "Declared workload priors, not learned from oracle: exactly one child per selected parent on each edge, no retries, and specified parameter preservation.",
+  "source_services": ["store"],
+  "field": "phone",
+  "rules": [
+    {"parent_service": "api", "child_service": "profile", "preserve_fields": ["user_id"]},
+    {"parent_service": "api", "child_service": "decoy", "parent_operation_prefix": "/case/decoy_", "preserve_fields": []},
+    {"parent_service": "profile", "child_service": "store", "preserve_fields": ["user_id"]},
+    {"parent_service": "decoy", "child_service": "store", "preserve_fields": ["user_id"]}
+  ]
+}

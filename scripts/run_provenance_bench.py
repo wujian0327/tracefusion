@@ -162,6 +162,9 @@ def main():
             "--predictions", str(run_dir / "predictions.jsonl"),
             "--oracle-dir", str(run_dir / "oracle"), "--output", str(run_dir / "report.json"),
         ], check=True)
+        subprocess.run([
+            sys.executable, str(BENCH / "compare_baselines.py"), "--run-dir", str(run_dir),
+        ], check=True)
         metadata["status"] = "complete"
         print(f"Results: {run_dir}")
         if not metadata["capture_complete"]:

@@ -3,7 +3,7 @@
 这是一个独立的受控实验台，用于研究“外部响应中的敏感值来自哪次读取、经过哪些字段传播”。
 现有 TraceFusion、Bookinfo、Hotel、TrainTicket 的代码与运行方式不变。
 
-**当前提供的是 benchmark + 值/时间候选基线，不是已经完成的新 TraceFusion 算法。**
+**当前提供的是 benchmark + 值/时间候选基线 + 两层约束基线，不是已经完成的新 TraceFusion 算法。**
 所有数据是合成字符串，如 `SYNTH-PHONE-0017`；不使用真实个人信息。
 
 ## 快速运行
@@ -159,3 +159,83 @@ python3 -m unittest discover -s services/provenance_bench -p 'test_*.py' -v
 
 包含独立来源真值、错误唯一归因、同值多候选、缺失观测分母和 tshark JSON 解析合同检查。
 仍需在实际服务器运行 pcap 模式验证 tcpdump/tshark 版本及权限。
+
+## 两层约束基线与四组对照
+
+运行 `scripts/run_provenance_bench.py` 现在会自动额外生成 `comparison/`，
+原来的 `predictions.jsonl` 和 `report.json` 仍属于值/时间基线。
+
+```text
+comparison/
+  summary.json                 四种方法的整体/分场景指标与输入 SHA256
+  value_time_predictions.jsonl 原始值/时间基线
+  semantics_predictions.jsonl  只加入请求参数约束
+  capacity_predictions.jsonl   只加入调用次数约束
+  combined_predictions.jsonl   参数 + 调用次数约束
+  *_report.json                独立 oracle 评测结果
+  *_diagnostics.json           约束配置、调用候选及回退原因（约束方法）
+```
+
+已有完整运行目录可直接重评，无需重新启动服务或采集：
+
+```bash
+python3 services/provenance_bench/compare_baselines.py \
+  --run-dir result/provenance_case_01
+```
+
+默认写入该目录的 `comparison/`，目标必须尚不存在；再次比较用
+`--output-dir result/provenance_case_01/comparison_02`。
+四种方法先分别在独立进程中生成预测，然后才调用评测器；预测器不接收 oracle 路径。
+`summary.json` 的 `status` 应为 `complete`，算法比较使用相同的观察、查询和时间容差。
+
+### 第一层：调用候选
+
+`constraint_profile.json` 显式声明这个受控 workload 的先验：
+
+- API→Profile、Profile→Store、Decoy→Store 保持请求 `user_id`。
+- API→Decoy **不**要求相同 `user_id`，只在 `/case/decoy_` 路由发生。
+- 每个选中的父操作在对应服务边上恰有一次子调用，每个子调用只属于一个父操作。
+- 数据源角色为 Store，待溯源字段为响应 `phone`。
+
+这些信息来自 benchmark 的设计，**不是从 oracle 学习，也不是声称能从外部观测自动获得的通用规律**。
+业务中的重试、可选分支、批量调用、扇出及异步模型不一定满足这个 profile。
+
+算法先按拓扑与时间容差构建二部候选图，再在声明透传的边上排除已知参数不一致的候选。
+缺少参数视为未知，不直接排除。对时间图的每个连通分量检查一对一匹配：
+每条边只有在至少一个完整可行匹配中出现，才被保留。没有按评分挑出唯一匹配，也不靠事件编号打破歧义。
+实现逐边固定后检测匹配可行性，目的是正确验证方法，不是大规模优化求解器。
+
+### 第二层：字段传播
+
+从 sink 向下游遍历保留的调用候选，检查响应字段是否具有相同值，直到到达 Store 来源。
+输出来源候选与传播边的**并集**，表示多种可能解释，不表示所有边同时成立，也不是概率或校准后的置信度。
+`unique` 只表示在当前观测、profile 和参数下剩余一个来源，不能解读为无条件的因果证明。
+这版仅支持标量 `phone` 的相同值传播，尚未实现字段变换或跨请求持久化溯源。
+
+### 约束无解与规模限制
+
+父子数量不相等、参数筛选后无完整匹配，或分量规模超过限制时，
+该分量恢复到**时间筛选后的候选**，不强制匹配，也不保留导致无解的参数裁剪。
+diagnostics 中分别记录 `unbalanced_counts`、`no_perfect_matching`、`component_limit`。
+默认每分量最多 128 个子事件、4096 条参数筛选后的候选边；独立 CLI 可调整。
+
+回退不会恢复未采集到的事件，也不能识别所有错误先验：例如父子恰好同时丢失时，
+错误 profile 仍可能存在可行匹配。时间窗口本身也可能排除真实关系。
+因此要同时检查来源召回率、错误唯一归因、采集完整性和 `fallback_components`。
+
+只运行预测器（盲评时只提供 observations 与 profile）：
+
+```bash
+python3 services/provenance_bench/constrained.py \
+  --observations result/provenance_case_01/observations/events.jsonl \
+  --queries result/provenance_case_01/observations/queries.jsonl \
+  --profile services/provenance_bench/constraint_profile.json \
+  --output result/provenance_case_01/my_constrained_predictions.jsonl \
+  --diagnostics result/provenance_case_01/my_constrained_diagnostics.json
+```
+
+使用 `--disable-semantics` 或 `--disable-capacity` 做消融，时间容差默认 5ms。
+不要通过收紧窗口只追求少量候选：boundary 时间在发送后记录，真实子事件可能稍晚结束。
+
+测试还包括所有 3×3 二部图与穷举匹配的比较、同值多解、参数先验无解、采集数量不平衡、
+规模上限和输入顺序不影响来源选择。新增运行建议更换 seed 和并发度；参与算法设计的数据只作开发回归。
