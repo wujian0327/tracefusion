@@ -183,3 +183,18 @@ python3 src/plot/plot_bookinfo_language_fulltraceacc.py
 - TraceFusion 评测时不会用 `trace_id` 做 span 配对；`trace_id` 只用于验证预测是否正确。
 - DeepFlow local baseline 默认使用 `baseline/deepflow/deepflow-app-source` 中保留的 DeepFlow app tracing 代码，并从 DeepFlow Query API 批量读取 `l7_flow_log`，在本地调用原始 L7FlowTracing 逻辑。
 - Hotel loader 已移动到 `services/hotelReservation_http1.1/uniform_hotel_load.py`，和 Bookinfo/TrainTicket 的 service-local loader 结构保持一致。
+
+## Sensitive-data Provenance Benchmark
+
+新增独立的敏感数据溯源实验台，包含基础传播、同值并发、重复读取和双来源干扰场景，
+并提供隔离的字段来源真值、值/时间参考基线及来源/传播边评测。
+
+```bash
+python3 scripts/run_provenance_bench.py --requests 20 --concurrency 8
+```
+
+需要 Python 3.10+，默认模式不依赖第三方 Python 包。默认 boundary 模式用于插桩冒烟验证；
+实际无侵入 HTTP 抓包使用 `--capture pcap`，需要 Linux、tcpdump、tshark 和抓包权限。
+当前数据源是 SQLite 的 HTTP 查询网关，不代表原生数据库协议采集支持。
+详细场景、数据格式、真值边界和运行命令见 [provenance benchmark README](services/provenance_bench/README.md)。
+
