@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 FIELDS = ["protocol_type", "client", "server", "stream_id", "msg_type", "timestamp", "data"]
@@ -55,8 +56,16 @@ def sha256(path):
 
 
 def write_json(path, value):
-    Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-                          encoding="utf-8")
+    path = Path(path)
+    payload = json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                     prefix="." + path.name + ".", delete=False) as handle:
+        temporary = Path(handle.name)
+        handle.write(payload)
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_json(path):
@@ -143,6 +152,7 @@ def infer(observations, predictions, variant="full"):
     predictions = Path(predictions)
     if predictions.exists():
         raise ValueError("Prediction output already exists")
+    input_sha256 = sha256(observations)
     with open(observations, newline="", encoding="utf-8") as f:
         if csv.DictReader(f).fieldnames != FIELDS:
             raise ValueError("Inference accepts only the allowlisted observations schema")
@@ -154,14 +164,23 @@ def infer(observations, predictions, variant="full"):
         "LINEAGE_CONTEXT_MIX_WEIGHT": "0.5" if variant == "full" else "0",
     })
     engine = Path(__file__).resolve().parents[1] / "src" / "tracefusion.py"
-    subprocess.run([sys.executable, str(engine), "--csv-path", str(observations),
-                    "--topology-mode", "service-graph",
-                    "--blind-predictions-out", str(predictions)], env=env, check=True)
-    if not predictions.is_file():
-        raise RuntimeError("Engine produced no predictions; inspect root detection and input")
-    report = read_json(predictions)
-    report.update({"variant": variant, "observations_sha256": sha256(observations),
-                   "engine_sha256": sha256(engine)})
+    engine_sha256 = sha256(engine)
+    # The engine writes a private staging file. Only a complete prediction with
+    # verified input/code hashes is published at the requested output path.
+    with tempfile.TemporaryDirectory(prefix=".blind-infer-", dir=predictions.parent) as staging:
+        raw_predictions = Path(staging) / "engine_predictions.json"
+        subprocess.run([sys.executable, str(engine), "--csv-path", str(observations),
+                        "--topology-mode", "service-graph",
+                        "--blind-predictions-out", str(raw_predictions)], env=env, check=True)
+        if sha256(observations) != input_sha256 or sha256(engine) != engine_sha256:
+            raise RuntimeError("Inference input or engine changed during execution; predictions are not frozen")
+        if not raw_predictions.is_file():
+            raise RuntimeError("Engine produced no predictions; inspect root detection and input")
+        report = read_json(raw_predictions)
+    report.update({"variant": variant, "observations_sha256": input_sha256,
+                   "engine_sha256": engine_sha256})
+    if predictions.exists():
+        raise RuntimeError("Prediction output appeared during inference; refusing to overwrite it")
     write_json(predictions, report)
 
 

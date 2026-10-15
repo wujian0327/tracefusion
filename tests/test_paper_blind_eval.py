@@ -132,6 +132,17 @@ class BlindWorkflowTest(unittest.TestCase):
             workflow.evaluate(run / "oracle.json", run / "predictions.json", run / "metrics.json",
                               run / "observations.csv")
 
+    def test_input_change_during_inference_is_rejected_before_binding_prediction_hash(self):
+        run = self.prepared(self.source(), "mutable-input")
+        def mutate_input(*args, **kwargs):
+            with (run / "observations.csv").open("a") as f:
+                f.write("\n")
+            workflow.write_json(run / "predictions.json", {"mode": "blind-service-graph", "predictions": []})
+        with patch.object(workflow.subprocess, "run", side_effect=mutate_input):
+            with self.assertRaisesRegex(RuntimeError, "changed during execution"):
+                workflow.infer(run / "observations.csv", run / "predictions.json")
+        self.assertNotIn("observations_sha256", workflow.read_json(run / "predictions.json"))
+
     def test_no_overwrite_and_too_small_population(self):
         source = self.source()
         run = self.prepared(source, "existing")
