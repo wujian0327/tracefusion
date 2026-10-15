@@ -1352,6 +1352,7 @@ def run_service_graph_algorithm(
     topology_mode,
     calibration_profile_in=None,
     calibration_profile_out=None,
+    blind_predictions_out=None,
 ):
     """
     Service-graph lineage:
@@ -1359,6 +1360,11 @@ def run_service_graph_algorithm(
     - 每条 edge 上 child span 选择最佳 parent span，parent span 可承载多个 child；
     - 通过已预测 parent span 迭代传播 trace 归属，适配重复调用边和多父节点服务。
     """
+    if blind_predictions_out:
+        if calibration_profile_in or calibration_profile_out:
+            raise ValueError("Blind inference cannot read or learn a supervised calibration profile")
+        if any(e.get('trace_id') for e in all_events):
+            raise ValueError("Blind inference requires observations with trace_id removed; use paper_blind_eval.py prepare")
     profile_enabled = os.getenv("LINEAGE_PROFILE", "0") != "0"
     profile_started_at = time.perf_counter()
     profile_last_at = profile_started_at
@@ -1558,6 +1564,8 @@ def run_service_graph_algorithm(
         "LINEAGE_CHILD_ORDER_MODE",
         os.getenv("LINEAGE_TOPOLOGY_CHILD_ORDER", "trace"),
     ).strip().lower()
+    if blind_predictions_out:
+        child_order_mode = 'temporal-gap'
     root_child_order = []
     root_child_order_source = "none"
     root_seed_count = 0
@@ -2166,8 +2174,8 @@ def run_service_graph_algorithm(
             'p95_outside_ms': float(np.percentile(outside_errors, 95)),
         }
 
-    slot_fallback_enabled = os.getenv("LINEAGE_GRAPH_SLOT_FALLBACK", "0") != "0"
-    parent_slot_fallback_enabled = os.getenv("LINEAGE_GRAPH_PARENT_SLOT_FALLBACK", "0") != "0"
+    slot_fallback_enabled = not blind_predictions_out and os.getenv("LINEAGE_GRAPH_SLOT_FALLBACK", "0") != "0"
+    parent_slot_fallback_enabled = not blind_predictions_out and os.getenv("LINEAGE_GRAPH_PARENT_SLOT_FALLBACK", "0") != "0"
     slot_low_diversity_ratio = float(os.getenv("LINEAGE_GRAPH_SLOT_LOW_DIVERSITY_RATIO", "0.20"))
     slot_low_signal = float(os.getenv("LINEAGE_GRAPH_SLOT_LOW_SIGNAL", "0.50"))
     slot_max_p95_ms = float(os.getenv("LINEAGE_GRAPH_SLOT_MAX_P95_MS", "50"))
@@ -2214,6 +2222,7 @@ def run_service_graph_algorithm(
             or os.getenv("LINEAGE_GRAPH_UNSUPERVISED_AUTO", "0") != "0"
         )
         and loaded_calibration_profile is None
+        and not blind_predictions_out
     )
     learned_edge_policies = {}
     slot_fallback_summary = {}
@@ -2578,7 +2587,7 @@ def run_service_graph_algorithm(
             iterations_run += propagate_graph_predictions(slot_second_pass_iterations)
         profile_mark("slot-apply")
 
-    containment_fallback_enabled = os.getenv("LINEAGE_GRAPH_CONTAINMENT_FALLBACK", "0") != "0"
+    containment_fallback_enabled = not blind_predictions_out and os.getenv("LINEAGE_GRAPH_CONTAINMENT_FALLBACK", "0") != "0"
     containment_low_diversity_ratio = float(os.getenv(
         "LINEAGE_GRAPH_CONTAINMENT_LOW_DIVERSITY_RATIO",
         str(slot_low_diversity_ratio),
@@ -2922,6 +2931,40 @@ def run_service_graph_algorithm(
 
     parent_reconstruction_summary = reconstruct_predicted_parents_from_trace_labels()
     profile_mark("parent-reconstruction")
+
+    if blind_predictions_out:
+        root_key_by_label = {root_label_by_key[e['key']]: e['key'] for e in root_events}
+        prediction_report = {
+            'schema_version': 1,
+            'mode': 'blind-service-graph',
+            'root_ip': root_ip,
+            'root_child_order_source': root_child_order_source,
+            'parent_reconstruction': parent_reconstruction_summary,
+            'environment': {
+                **{k: v for k, v in sorted(os.environ.items()) if k.startswith('LINEAGE_')},
+                'LINEAGE_CHILD_ORDER_MODE': 'temporal-gap',
+                'LINEAGE_GRAPH_SLOT_FALLBACK': '0',
+                'LINEAGE_GRAPH_PARENT_SLOT_FALLBACK': '0',
+                'LINEAGE_GRAPH_CONTAINMENT_FALLBACK': '0',
+                'LINEAGE_GRAPH_UNSUPERVISED_GATE': '0',
+                'LINEAGE_GRAPH_UNSUPERVISED_AUTO': '0',
+            },
+            'predictions': [
+                {
+                    'key': list(e['key']),
+                    'root_key': list(root_key_by_label[predicted_trace_by_key[e['key']]])
+                        if e['key'] in predicted_trace_by_key else None,
+                    'parent_key': list(predicted_parent_by_key[e['key']])
+                        if e['key'] in predicted_parent_by_key else None,
+                }
+                for e in all_relevant_events
+            ],
+        }
+        os.makedirs(os.path.dirname(os.path.abspath(blind_predictions_out)), exist_ok=True)
+        with open(blind_predictions_out, 'w', encoding='utf-8') as f:
+            json.dump(prediction_report, f, ensure_ascii=False, indent=2, allow_nan=False)
+        print(f"Blind predictions written: {blind_predictions_out}")
+        return prediction_report
 
     edge_accuracy = {}
     per_trace_total = defaultdict(int)
@@ -3504,7 +3547,14 @@ def run_lineage_algorithm(
     calibration_profile_in=None,
     calibration_profile_out=None,
     enable_db_lineage=None,
+    blind_predictions_out=None,
 ):
+    if blind_predictions_out:
+        if topology_mode not in (None, 'service-graph'):
+            raise ValueError("Blind inference supports service-graph only")
+        topology_mode = 'service-graph'
+        if enable_db_lineage or os.getenv('LINEAGE_ENABLE_DB', '0') != '0':
+            raise ValueError("Blind inference currently supports HTTP RPC observations only")
     if enable_db_lineage is None:
         enable_db_lineage = os.getenv("LINEAGE_ENABLE_DB", "0") != "0"
     # 解析 CSV
@@ -3605,6 +3655,7 @@ def run_lineage_algorithm(
             topology_mode,
             calibration_profile_in=calibration_profile_in,
             calibration_profile_out=calibration_profile_out,
+            blind_predictions_out=blind_predictions_out,
         )
     root_ip, tree = infer_topology(all_events)
     if not root_ip:
@@ -3831,6 +3882,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run lineage inference and export a JSON report.')
     parser.add_argument('--csv-path', default='/home/wujian/trace-fusion/data/pcap_cleaned_data.csv')
     parser.add_argument('--json-out', default='/home/wujian/trace-fusion/result/lineage_report.json')
+    parser.add_argument('--blind-predictions-out', default=None,
+                        help='Export predictions before evaluation; requires stripped trace_id observations')
     parser.add_argument(
         '--topology-mode',
         choices=['service-tree', 'edge-slot', 'service-tree-edge', 'service-graph'],
@@ -3860,4 +3913,6 @@ if __name__ == '__main__':
         calibration_profile_in=args.calibration_profile_in,
         calibration_profile_out=args.calibration_profile_out,
         enable_db_lineage=args.enable_db_lineage,
+        blind_predictions_out=args.blind_predictions_out,
     )
+
