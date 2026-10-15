@@ -80,6 +80,17 @@ class IndependentOracleTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate independent"):
             self.run_bridge()
 
+    def test_cross_request_parent_is_rejected_even_if_parent_was_already_visited(self):
+        self.truth["requests"].append({"request_id": "other"})
+        self.truth["rpcs"].extend([
+            {"request_id": "other", "span_id": "other-root", "parent_span_id": None,
+             "observation_id": "obs-other-root"},
+            {"request_id": "other", "span_id": "wrong-child", "parent_span_id": "root",
+             "observation_id": "obs-wrong-child"},
+        ])
+        with self.assertRaisesRegex(ValueError, "cross-request"):
+            self.run_bridge()
+
 
 if __name__ == "__main__":
     unittest.main()

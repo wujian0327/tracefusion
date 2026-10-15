@@ -49,6 +49,10 @@ def build_oracle(manifest_path, capture_path):
     if set(roots) != set(requested):
         raise ValueError("Every requested trace requires an independently logged root")
     # Check all references and cycles before using any capture information.
+    for rpc in truth.values():
+        parent = rpc.get("parent_span_id")
+        if parent and (parent not in truth or truth[parent]["request_id"] != rpc["request_id"]):
+            raise ValueError("Missing or cross-request independent parent")
     done = set()
     for span in truth:
         chain, current = set(), span
