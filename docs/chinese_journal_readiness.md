@@ -104,8 +104,8 @@ python3 scripts/paper_blind_eval.py evaluate \
 同一observations.csv分别用--variant time-only、no-context、full，写入不同预测与指标文件。
 
 - time-only：业务令牌与累计上下文权重为0。
-- no-context：关闭累计链路上下文，保留局部父子与兄弟证据。
-- full：业务令牌加迭代累计上下文。
+- no-context：关闭累计祖先上下文，仅保留局部父子业务值；修订盲推断不使用兄弟顺序或兄弟响应证据。
+- full：局部业务令牌加预测祖先累计上下文。
 
 全部关闭读取测试真值的回退，no-context不代表完全没有上下文。不得把历史profile结果混入。
 
@@ -124,7 +124,15 @@ python3 scripts/paper_blind_eval.py evaluate \
 ## 检查
 
 ~~~bash
-python3 -m unittest discover -s tests -p 'test_paper_*.py' -v
+python3 -m unittest discover -s tests -v
 ~~~
 
 回归检查是合成数据上的流程验证，不是三个基准的实际性能实验。
+
+## 2026年10月15日初始化修复
+
+盲推断已取消全局兄弟调用顺序和固定根层批次匹配，仅固定入口标签，根层与内部服务边统一选择可修正父候选。严格包含优先，原有界容差保留；上下文仅来自预测祖先，全部服务边迭代重扫，并记录收敛。历史非盲评路径保留兼容。
+
+27项检查通过；12组抓包×3配置开发回归完成，完整方法四负载FullTraceAcc均值为100.00%、99.90%、99.70%、99.20%。仍有29个RPC错误，且400 RPS第3次下降0.6个百分点。完整与关闭累计项的逐RPC预测相同，不作累计项增益声明。详细版本、逐运行结果、剩余错误及当前/历史环境区别见[修复复核记录](bookinfo_blind_initialization_fix_20261015.md)。
+
+当前不新增采集、不投稿。先审计剩余时间边界与同值歧义，冻结最终策略后再补同条件基线与开销；后续独立验证不能由这些已用于诊断的开发数据替代。

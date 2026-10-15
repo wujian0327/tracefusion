@@ -75,7 +75,8 @@ class BlindWorkflowTest(unittest.TestCase):
         pa = workflow.read_json(a / "predictions.json")
         pb = workflow.read_json(b / "predictions.json")
         self.assertEqual(pa["predictions"], pb["predictions"])
-        self.assertEqual(pa["root_child_order_source"], "temporal-gap")
+        self.assertEqual(pa["root_child_order_source"], "independent-service-edges")
+        self.assertEqual(pa["initialization"]["fixed_internal_rpc_count"], 0)
         self.assertEqual(pa["environment"]["LINEAGE_GRAPH_SLOT_FALLBACK"], "0")
 
     def test_unpaired_rpc_remains_in_evaluation_denominator(self):

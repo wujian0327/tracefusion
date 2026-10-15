@@ -561,6 +561,33 @@ def detect_child_call_order(parent_events, children_events_map):
     order = sorted(children_events_map.keys(), key=lambda ip: (*est_gap[ip], ip))
     return order, est_gap
 
+
+def predicted_ancestor_lineage_context(parent_key, event_by_key, parent_by_key, label_by_key):
+    """Business evidence from a consistent predicted ancestor path only.
+
+    The candidate parent's own payload is already scored locally. Descendants,
+    siblings and the child being scored must not reinforce their own labels.
+    Incomplete or cyclic paths provide no cumulative evidence.
+    """
+    label = label_by_key.get(parent_key)
+    if label is None:
+        return {}
+    context = {}
+    visited = {parent_key}
+    key = parent_by_key.get(parent_key)
+    while key is not None:
+        if key in visited or key not in event_by_key or label_by_key.get(key) != label:
+            return {}
+        visited.add(key)
+        event = event_by_key[key]
+        context = merge_token_weight_maps(
+            context,
+            token_set_to_weight_map(event.get('lineage_req_tokens', set()), 1.0),
+            token_set_to_weight_map(event.get('lineage_res_tokens', set()), 0.9),
+        )
+        key = parent_by_key.get(key)
+    return context
+
 def build_cost_matrix(
     parent_events,
     child_events,
@@ -1453,6 +1480,9 @@ def run_service_graph_algorithm(
     max_temporal_candidates = int(os.getenv("LINEAGE_GRAPH_MAX_TEMPORAL_CANDIDATES", "64"))
     max_fallback_candidates = int(os.getenv("LINEAGE_GRAPH_MAX_FALLBACK_CANDIDATES", "64"))
     propagation_mode = os.getenv("LINEAGE_GRAPH_PROPAGATION_MODE", "frontier").strip().lower()
+    if blind_predictions_out:
+        # Ancestor evidence can change beyond the immediate label frontier.
+        propagation_mode = 'full'
     temporal_profile_enabled = os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE", "1") != "0"
     temporal_profile_weight = float(os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE_WEIGHT", str(time_weight)))
     temporal_profile_min_samples = int(os.getenv("LINEAGE_GRAPH_TEMPORAL_PROFILE_MIN_SAMPLES", "8"))
@@ -1569,7 +1599,11 @@ def run_service_graph_algorithm(
     root_child_order = []
     root_child_order_source = "none"
     root_seed_count = 0
-    if direct_children_events:
+    if blind_predictions_out:
+        # Optional, repeated and parallel root calls do not have one global
+        # sibling order. Let graph propagation initialize and revise them.
+        root_child_order_source = 'independent-service-edges'
+    elif direct_children_events:
         topology_root_ip, topology_tree = infer_topology(all_events)
         if (
             child_order_mode in ("trace", "first-trace", "first_trace")
@@ -1634,6 +1668,8 @@ def run_service_graph_algorithm(
         trace_context_mode = "iterative"
     if trace_context_mode not in ("static", "iterative"):
         trace_context_mode = "static"
+    if blind_predictions_out:
+        trace_context_mode = 'iterative'
 
     def rebuild_trace_contexts(trace_predictions, keys=None):
         ctx = defaultdict(dict)
@@ -1784,6 +1820,7 @@ def run_service_graph_algorithm(
 
     parent_child_score_cache = {}
     trace_context_score_cache = {}
+    ancestor_context_cache = {}
 
     def cached_parent_child_score(edge, parent_event, child_event):
         cache_key = (edge, parent_event['key'], child_event['key'])
@@ -1794,13 +1831,24 @@ def run_service_graph_algorithm(
         parent_child_score_cache[cache_key] = score
         return score
 
-    def cached_trace_context_score(edge, parent_tid, child_event):
-        cache_key = (edge, parent_tid, child_event['key'])
+    def cached_trace_context_score(edge, parent_event, parent_tid, child_event):
+        if trace_context_weight == 0:
+            return 0.0
+        context_identity = parent_event['key'] if blind_predictions_out else parent_tid
+        cache_key = (edge, context_identity, child_event['key'])
         cached = trace_context_score_cache.get(cache_key)
         if cached is not None:
             return cached
+        if blind_predictions_out:
+            if parent_event['key'] not in ancestor_context_cache:
+                ancestor_context_cache[parent_event['key']] = predicted_ancestor_lineage_context(
+                    parent_event['key'], event_by_key, predicted_parent_by_key, predicted_trace_by_key,
+                )
+            context = ancestor_context_cache[parent_event['key']]
+        else:
+            context = trace_contexts.get(parent_tid, {})
         score = weighted_lineage_overlap_score(
-            trace_contexts.get(parent_tid, {}),
+            context,
             child_event.get('lineage_all_tokens', set()),
             edge_idf.get(edge, {}),
         )
@@ -1814,12 +1862,21 @@ def run_service_graph_algorithm(
         )
         best = None
 
+        if blind_predictions_out:
+            containing = [
+                (parent, score) for parent, score in temporal_candidates
+                if parent['req_ts'] <= child_event['req_ts']
+                and parent['res_ts'] >= child_event['res_ts']
+            ]
+            if containing:
+                temporal_candidates = containing
+
         for parent_event, t_score in temporal_candidates:
             parent_tid = current_predictions.get(parent_event['key'])
             if parent_tid is None:
                 continue
             lineage_score = cached_parent_child_score(edge, parent_event, child_event)
-            trace_context_score = cached_trace_context_score(edge, parent_tid, child_event)
+            trace_context_score = cached_trace_context_score(edge, parent_event, parent_tid, child_event)
             score = (
                 (lineage_score * lineage_weight)
                 + (trace_context_score * trace_context_weight)
@@ -1845,7 +1902,7 @@ def run_service_graph_algorithm(
             if parent_tid is None:
                 continue
             lineage_score = cached_parent_child_score(edge, parent_event, child_event)
-            trace_context_score = cached_trace_context_score(edge, parent_tid, child_event)
+            trace_context_score = cached_trace_context_score(edge, parent_event, parent_tid, child_event)
             t_score = fallback_temporal_score(edge, parent_event, child_event, distance)
             score = (
                 (lineage_score * lineage_weight)
@@ -1871,8 +1928,12 @@ def run_service_graph_algorithm(
                 services.add(event['server'])
         return services
 
+    propagation_converged = False
+
     def propagate_graph_predictions(iteration_limit):
         nonlocal trace_contexts, trace_context_event_count, trace_context_rebuild_count
+        nonlocal propagation_converged
+        propagation_converged = False
         iterations = 0
         use_frontier = propagation_mode not in ("full", "legacy", "all")
         active_parent_services = (
@@ -1882,6 +1943,7 @@ def run_service_graph_algorithm(
         )
         for iteration in range(iteration_limit):
             if use_frontier and not active_parent_services:
+                propagation_converged = True
                 break
             iterations = iteration + 1
             updates = {}
@@ -1893,6 +1955,8 @@ def run_service_graph_algorithm(
                 ]
             else:
                 edges_to_process = list(outgoing_by_edge.keys())
+            if blind_predictions_out:
+                edges_to_process.sort()
 
             for edge in edges_to_process:
                 child_events = outgoing_by_edge.get(edge, ())
@@ -1935,10 +1999,12 @@ def run_service_graph_algorithm(
                 }
 
             if not changed:
+                propagation_converged = True
                 break
             if trace_context_mode == "iterative":
                 trace_contexts, trace_context_event_count = rebuild_trace_contexts(predicted_trace_by_key)
                 trace_context_score_cache.clear()
+                ancestor_context_cache.clear()
                 trace_context_rebuild_count += 1
             if use_frontier:
                 active_parent_services = services_for_prediction_keys(changed_keys)
@@ -2939,10 +3005,24 @@ def run_service_graph_algorithm(
             'mode': 'blind-service-graph',
             'root_ip': root_ip,
             'root_child_order_source': root_child_order_source,
+            'algorithm_revision': 'independent-edges-ancestor-context-v2',
+            'initialization': {
+                'mode': 'entry-roots-only',
+                'fixed_entry_rpc_count': len(root_events),
+                'fixed_internal_rpc_count': len(fixed_prediction_keys - root_event_keys),
+                'internal_predictions_revisable': True,
+                'context_scope': 'predicted-ancestors-only',
+                'temporal_policy': 'strict-containment-first-bounded-fallback',
+                'propagation_mode': propagation_mode,
+                'iterations': iterations_run,
+                'converged': propagation_converged,
+            },
             'parent_reconstruction': parent_reconstruction_summary,
             'environment': {
                 **{k: v for k, v in sorted(os.environ.items()) if k.startswith('LINEAGE_')},
-                'LINEAGE_CHILD_ORDER_MODE': 'temporal-gap',
+                'LINEAGE_CHILD_ORDER_MODE': 'independent-service-edges',
+                'LINEAGE_GRAPH_PROPAGATION_MODE': propagation_mode,
+                'LINEAGE_GRAPH_CONTEXT_MODE': trace_context_mode,
                 'LINEAGE_GRAPH_SLOT_FALLBACK': '0',
                 'LINEAGE_GRAPH_PARENT_SLOT_FALLBACK': '0',
                 'LINEAGE_GRAPH_CONTAINMENT_FALLBACK': '0',
