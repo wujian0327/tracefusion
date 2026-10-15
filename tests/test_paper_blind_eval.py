@@ -56,6 +56,13 @@ class BlindWorkflowTest(unittest.TestCase):
             self.assertNotIn(token, text)
         self.assertIn("book-0", text)
 
+    def test_independent_evaluation_identifiers_are_scrubbed_recursively(self):
+        value = {"nested": [{"X-TF-Eval-Span-Id": "span-secret",
+                             "X-TF-Eval-Parent-Span-Id": "parent-secret",
+                             "X-TF-Eval-Observation-Id": "observation-secret",
+                             "url": "/books?id=7&X-TF-Eval-Span-Id=span-secret"}]}
+        self.assertEqual(workflow.clean_payload(value), {"nested": [{"url": "/books?id=7"}]})
+
     def test_renaming_all_truth_labels_leaves_inference_input_and_predictions_unchanged(self):
         a = self.prepared(self.source(), "a")
         b = self.prepared(self.source(labels=("random-z", "random-q")), "b")

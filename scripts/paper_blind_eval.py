@@ -21,6 +21,7 @@ FIELDS = ["protocol_type", "client", "server", "stream_id", "msg_type", "timesta
 RESERVED = {
     "xmark", "traceid", "spanid", "parentspanid", "traceparent", "tracestate",
     "b3", "xb3traceid", "xb3spanid", "xb3parentspanid", "xobservationid",
+    "xtfevalspanid", "xtfevalparentspanid", "xtfevalobservationid",
 }
 
 

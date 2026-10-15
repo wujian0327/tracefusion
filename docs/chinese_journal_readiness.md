@@ -8,7 +8,7 @@
 - 默认服务图可利用首条真值trace确定子调用顺序。槽位回退模板也会读取首条真值trace；门控叫unsupervised不代表整个模板生成无真值。
 - calibration-profile保存策略和阈值，不能单独证明测试槽位模板已与测试真值隔离。
 - pcap/eBPF归一化会删除不完整trace。后续去除标签不能恢复已删除事件或纠正样本选择偏差。
-- 既有ParentEdge F1参考边由真值trace分组后按因果时间规则推导，不是独立真实父子边。
+- 旧默认ParentEdge F1参考边由真值trace分组后按因果时间规则推导，不是独立真实父子边。另行提供的真实调用日志可通过下述独立清单入口评测，不应混用两种真值来源。
 - DeepFlow与TraceWeaver的输入、粒度及分母需逐配置核对。执行失败、协议不支持与成功运行后准确率0%需分开。
 - TLS README说明Go读方向返回探针默认关闭，不能把协议表的勾选解释为完整采集验证。
 
@@ -73,6 +73,30 @@ infer只接收观测文件，清除外部LINEAGE_*覆盖，冻结三种配置；
 
 evaluate加--parent-oracle /path/to/independent_population.json才启用结构指标；清单遗漏、重复键、不同trace父引用和总请求数冲突会拒绝计分。complete_population声明不能证明真值独立，须保留方法与日志。
 
+### 已有独立日志的适配
+
+若归档包含`independent-rpc-parent-ground-truth-v1`清单与保留评测HTTP头的CSV，可在预测生成后使用：
+
+~~~bash
+python3 scripts/paper_independent_oracle.py \
+  --manifest /path/to/ground_truth_manifest.json \
+  --capture-with-eval /path/to/cleaned_data_with_eval.csv \
+  --output result/paper_run_01/independent_population.json
+
+python3 scripts/paper_blind_eval.py evaluate \
+  --observations result/paper_run_01/observations.csv \
+  --oracle result/paper_run_01/oracle.json \
+  --predictions result/paper_run_01/full_predictions.json \
+  --parent-oracle result/paper_run_01/independent_population.json \
+  --output result/paper_run_01/full_independent_metrics.json
+~~~
+
+适配只发生在评测端。它按请求头`X-TF-Eval-Span-Id`与独立清单中的span逐项精确对齐，同时核对父标识、observation标识及请求标签；不根据时间猜测父子关系，也不使用CSV中可能沿用旧定义的span_id列。重复标识、父引用环、缺失请求根和捕获身份冲突会报错。清单完整性仍取决于真实调用日志本身，须核对负载报告与原始JSONL。
+
+未捕获但存在于独立清单的RPC保留为评测占位键，计入失败分母；只有响应而无请求身份时拒绝自动对齐。评测文件及保留评测头的CSV不能交给推断进程。prepare也会递归移除payload中的X-TF-Eval标识字段。
+
+当前evaluate的SpanAcc/Coverage分母包含入口RPC；ParentEdge F1按全部非根真实父边计算。历史independent_metrics可能只统计内部RPC，比较前须统一单位与分母。DeepFlow若未导出可核验的父边，结构指标保持不适用。
+
 ## 消融与基线
 
 同一observations.csv分别用--variant time-only、no-context、full，写入不同预测与指标文件。
@@ -98,7 +122,7 @@ evaluate加--parent-oracle /path/to/independent_population.json才启用结构�
 ## 检查
 
 ~~~bash
-python3 -m unittest discover -s tests -p 'test_paper_blind_eval.py' -v
+python3 -m unittest discover -s tests -p 'test_paper_*.py' -v
 ~~~
 
 回归检查是合成数据上的流程验证，不是三个基准的实际性能实验。
